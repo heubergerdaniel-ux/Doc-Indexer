@@ -1,0 +1,7 @@
+.env
+qdrant_data/
+indexer_state/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store

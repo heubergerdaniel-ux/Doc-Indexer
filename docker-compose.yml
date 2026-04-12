@@ -1,0 +1,65 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.9.2
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+
+  indexer:
+    build: ./indexer
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    extra_hosts:
+      - "host-gateway:172.17.0.1"
+    volumes:
+      - /mnt/nas:/mnt/nas:ro
+      - ./indexer_state:/app/indexer_state
+    deploy:
+      resources:
+        limits:
+          cpus: '0.8'
+    environment:
+      - SCAN_PATH=/mnt/nas/Dokumente
+      - SCAN_INTERVAL=3600
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_COLLECTION=documents
+      - OLLAMA_HOST=172.17.0.1
+      - OLLAMA_PORT=11434
+      - EMBED_MODEL=nomic-embed-text
+      - OCR_LANG=deu+eng
+      - CHUNK_SIZE=600
+      - CHUNK_OVERLAP=80
+      - INDEXER_THREADS=1
+    env_file:
+      - path: .env
+        required: false
+
+  search-api:
+    build: ./search_api
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    extra_hosts:
+      - "host-gateway:172.17.0.1"
+    ports:
+      - "8765:8765"
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_COLLECTION=documents
+      - OLLAMA_HOST=172.17.0.1
+      - OLLAMA_PORT=11434
+      - EMBED_MODEL=nomic-embed-text
+      - LLM_MODEL=llama3.2:3b
+      - SYNOLOGY_IP=192.168.1.216
+      - SMB_SHARE_NAME=documents
+    env_file:
+      - path: .env
+        required: false
