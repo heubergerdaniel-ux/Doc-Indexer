@@ -16,10 +16,11 @@ QDRANT_PORT  = int(os.environ.get("QDRANT_PORT", 6333))
 COLLECTION   = os.environ.get("QDRANT_COLLECTION", "documents")
 OLLAMA_HOST  = os.environ.get("OLLAMA_HOST", "172.17.0.1")
 OLLAMA_PORT  = int(os.environ.get("OLLAMA_PORT", 11434))
-EMBED_MODEL  = os.environ.get("EMBED_MODEL", "nomic-embed-text")
-LLM_MODEL    = os.environ.get("LLM_MODEL", "llama3.2:3b")
-SYNOLOGY_IP  = os.environ.get("SYNOLOGY_IP", "192.168.1.216")
-SMB_SHARE    = os.environ.get("SMB_SHARE_NAME", "documents")
+EMBED_MODEL      = os.environ.get("EMBED_MODEL", "nomic-embed-text")
+LLM_MODEL        = os.environ.get("LLM_MODEL", "llama3.2:3b")
+SYNOLOGY_IP      = os.environ.get("SYNOLOGY_IP", "192.168.1.216")
+SMB_SHARE        = os.environ.get("SMB_SHARE_NAME", "documents")
+SCORE_THRESHOLD  = float(os.environ.get("SCORE_THRESHOLD", "0.50"))
 
 EMBED_URL    = f"http://{OLLAMA_HOST}:{OLLAMA_PORT}/api/embeddings"
 GENERATE_URL = f"http://{OLLAMA_HOST}:{OLLAMA_PORT}/api/generate"
@@ -63,7 +64,7 @@ def build_web_link(rel_path: str) -> str:
     )
 
 
-def hit_to_dict(hit, text_limit: int = 300) -> dict:
+def hit_to_dict(hit, text_limit: int = 600) -> dict:
     p = hit.payload
     return {
         "score": round(hit.score, 4),
@@ -114,6 +115,7 @@ async def search(
     limit: int = Query(8, ge=1, le=50),
     folder: str = Query(None),
     dedupe: bool = Query(True),
+    score_threshold: float = Query(SCORE_THRESHOLD, ge=0.0, le=1.0),
 ):
     try:
         embedding = get_embedding(q)
@@ -128,6 +130,7 @@ async def search(
             limit=fetch_limit,
             query_filter=build_filter(folder),
             with_payload=True,
+            score_threshold=score_threshold,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Qdrant error: {exc}")
@@ -146,6 +149,7 @@ async def ask(
     q: str = Query(..., min_length=1),
     limit: int = Query(5, ge=1, le=20),
     folder: str = Query(None),
+    score_threshold: float = Query(SCORE_THRESHOLD, ge=0.0, le=1.0),
 ):
     try:
         embedding = get_embedding(q)
@@ -159,6 +163,7 @@ async def ask(
             limit=limit * 2,
             query_filter=build_filter(folder),
             with_payload=True,
+            score_threshold=score_threshold,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Qdrant error: {exc}")

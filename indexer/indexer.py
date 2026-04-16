@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 import time
 import hashlib
@@ -161,7 +162,7 @@ def extract_text_ocr(pdf_path: Path) -> list[tuple[int, str]]:
     try:
         images = convert_from_path(
             str(pdf_path),
-            dpi=200,
+            dpi=300,
             output_folder=str(TMP_DIR),
             fmt="jpeg",
             thread_count=1,
@@ -187,15 +188,84 @@ def extract_text_ocr(pdf_path: Path) -> list[tuple[int, str]]:
 # Chunking and embedding
 # ---------------------------------------------------------------------------
 
+# Common German/English abbreviations that end with a period but are NOT
+# sentence boundaries.
+_ABBREV_RE = re.compile(
+    r'\b(?:Abs|Art|Nr|Dr|Prof|Str|Hrsg|Aufl|Abb|Tab|bzw|ca|ggf|inkl|'
+    r'usw|z\.B|d\.h|u\.a|o\.ä|s\.o|s\.u|vgl|etc|ggü|i\.d\.R|'
+    r'Jan|Feb|Mär|Apr|Mai|Jun|Jul|Aug|Sep|Okt|Nov|Dez)\.',
+    re.IGNORECASE,
+)
+# Sentence boundary: end-punctuation followed by whitespace + uppercase/digit/quote
+_SENT_SPLIT_RE = re.compile(r'(?<=[.!?])\s+(?=[A-ZÜÄÖ\"\„0-9\(])')
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split text into sentences, respecting German abbreviations."""
+    # Normalise line endings and collapse 3+ newlines
+    text = re.sub(r'\r\n', '\n', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    sentences: list[str] = []
+    for para in re.split(r'\n{2,}', text):
+        para = para.strip()
+        if not para:
+            continue
+        # Temporarily mask abbreviation periods so we don't split on them
+        masked = _ABBREV_RE.sub(lambda m: m.group().replace('.', '\x00'), para)
+        for part in _SENT_SPLIT_RE.split(masked):
+            restored = part.replace('\x00', '.').strip()
+            if restored:
+                sentences.append(restored)
+    return sentences
+
+
 def chunk_text(text: str, size: int, overlap: int) -> list[str]:
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + size
-        chunk = text[start:end]
-        if len(chunk.strip()) >= 20:
+    """Sentence-aware chunking. Falls back to hard character-split only for
+    single sentences that exceed *size* on their own."""
+    sentences = _split_sentences(text)
+    if not sentences:
+        return []
+
+    chunks: list[str] = []
+    buf: list[str] = []
+    buf_len = 0
+
+    for sent in sentences:
+        sent_len = len(sent)
+
+        # Hard-split an individual sentence that is already larger than size
+        if not buf and sent_len > size:
+            start = 0
+            while start < sent_len:
+                piece = sent[start:start + size].strip()
+                if len(piece) >= 20:
+                    chunks.append(piece)
+                start += size - overlap
+            continue
+
+        if buf and buf_len + sent_len + 1 > size:
+            chunks.append(' '.join(buf).strip())
+            # Keep trailing sentences for overlap
+            carry: list[str] = []
+            carry_len = 0
+            for s in reversed(buf):
+                if carry_len + len(s) + 1 <= overlap:
+                    carry.insert(0, s)
+                    carry_len += len(s) + 1
+                else:
+                    break
+            buf = carry
+            buf_len = carry_len
+
+        buf.append(sent)
+        buf_len += sent_len + 1
+
+    if buf:
+        chunk = ' '.join(buf).strip()
+        if len(chunk) >= 20:
             chunks.append(chunk)
-        start += size - overlap
+
     return chunks
 
 
